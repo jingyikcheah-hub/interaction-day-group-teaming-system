@@ -2,6 +2,20 @@
 
 A deployable Group Teaming Up System for Interaction Day.
 
+## v7 Admin Controls Update
+
+This version adds an Event Day Admin Control Panel so the admin does **not** need to open Supabase Table Editor to fix records.
+
+New Admin features:
+
+- Live Wait List Management inside Admin Mode
+- Remove an individual participant with confirmation
+- Change a participant's current year directly from Admin Mode
+- Recalculate Teams when exactly 11 participants are present
+- Reset Event still clears participants, result groups, countdown/progress/completed state
+- Admin actions use Supabase RPC functions instead of public DELETE/UPDATE policies
+- RLS remains enabled; the frontend does not use any service role key
+
 ## Features
 
 - Participant Mode for QR code users
@@ -13,6 +27,7 @@ A deployable Group Teaming Up System for Interaction Day.
 - Pop sound when a participant joins
 - Auto-start when 11 participants have joined
 - Manual Admin Start button
+- Admin Remove / Change Year / Reset / Recalculate controls
 - Animated 3, 2, 1 countdown
 - 3-second animated progress bar
 - Balanced team formation by current year
@@ -44,26 +59,26 @@ Password:
 jingyik12345
 ```
 
-## Important Note
+## Important Security Note
 
-This system includes a real Supabase-backed multi-phone mode. Localhost or localStorage alone cannot sync 11 participants across different phones. For the real event QR flow, deploy the website and connect Supabase.
+The Admin credentials are checked by Supabase RPC functions server-side. Public users still do not receive direct DELETE/UPDATE access to the `participants` table.
 
-The Admin credentials are protected better than a simple frontend-only password because the Supabase SQL functions verify the credentials server-side. For a university event this is enough, but do not reuse this as a high-security production authentication system.
+This is suitable for a short university event, but it is not a full enterprise authentication system. Do not place any Supabase `service_role` key in the frontend or Vercel public environment variables.
 
 ## Setup
 
 ### 1. Install dependencies
 
 ```bash
-npm install
+npm install --registry=https://registry.npmjs.org/
 ```
 
-### 2. Create Supabase project
+### 2. Update Supabase SQL
 
-Create a Supabase project, then open:
+Open:
 
 ```txt
-Supabase Dashboard → SQL Editor
+Supabase Dashboard → SQL Editor → New Query
 ```
 
 Paste and run the full content of:
@@ -71,6 +86,15 @@ Paste and run the full content of:
 ```txt
 supabase_schema.sql
 ```
+
+If you already ran an older version, run this new SQL again. It is designed to be safe to run multiple times and will add/update these Admin RPC functions:
+
+- `admin_remove_participant`
+- `admin_update_participant_year`
+- `admin_reset_event`
+- `admin_start_event`
+- `admin_save_groups`
+- `auto_start_when_full`
 
 ### 3. Create environment file
 
@@ -84,14 +108,10 @@ Fill in:
 
 ```env
 VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_ANON_PUBLIC_KEY
+VITE_SUPABASE_ANON_KEY=YOUR_SUPABASE_PUBLISHABLE_OR_ANON_KEY
 ```
 
-You can find these values in:
-
-```txt
-Supabase Dashboard → Project Settings → API
-```
+Use Supabase Publishable Key or legacy anon public key. Do **not** use service role / secret key.
 
 ### 4. Run locally for testing
 
@@ -99,7 +119,14 @@ Supabase Dashboard → Project Settings → API
 npm run dev
 ```
 
-Open the URL shown by Vite.
+Recommended local test URLs:
+
+```txt
+Participant: http://localhost:5173/#user
+Dashboard:   http://localhost:5173/#dashboard
+Admin:       http://localhost:5173/#admin
+Demo:        http://localhost:5173/#demo
+```
 
 ### 5. Deploy to Vercel
 
@@ -111,7 +138,7 @@ Open the URL shown by Vite.
 4. Deploy.
 5. Generate a QR code using your Participant URL.
 
-Recommended URLs after deployment:
+Recommended deployment URLs:
 
 ```txt
 Participant QR URL: https://YOUR_PROJECT.vercel.app/#user
@@ -123,16 +150,15 @@ Demo URL: https://YOUR_PROJECT.vercel.app/#demo
 ## Event Day Workflow
 
 1. Open Dashboard mode on the classroom monitor.
-2. Display the QR code generated from `https://YOUR_PROJECT.vercel.app/#user` to participants.
-3. Participants scan and open Participant Mode directly.
-4. Each participant selects their official name and current year.
-5. The monitor Dashboard wait list updates live.
-6. When 11 participants join, the system auto-starts.
-7. Admin may also enter Admin Mode and click Start manually.
-8. The Dashboard shows the animated countdown and formation progress.
-9. Team results appear as Group 1, Group 2, Group 3, and Group 4.
-10. The browser automatically announces the groups by voice.
-11. Admin can reset the event if needed.
+2. Open Admin Mode on your own device and login.
+3. Click Reset Event before participants join.
+4. Display the QR code generated from `https://YOUR_PROJECT.vercel.app/#user`.
+5. Participants scan and select their official name + current year.
+6. Dashboard wait list updates live.
+7. If someone made a mistake, Admin Mode can remove them or change their year.
+8. When 11 participants join, the system can auto-start, or the admin can click Start Formation.
+9. If the admin fixed records and wants a new result, click Recalculate Teams when exactly 11 participants are present.
+10. The Dashboard shows the animated countdown, progress bar, team result, and voice announcement.
 
 ## Participant List
 
@@ -156,6 +182,7 @@ The algorithm tries to:
 2. Keep Group 1, Group 2, and Group 3 close in average current-year strength.
 3. Give Group 4 stronger members where possible because Group 4 has only 2 people.
 4. Avoid placing too many same-year participants into one group when a fairer distribution exists.
+5. Display and announce each group from higher year to lower year.
 
 ## Troubleshooting
 
@@ -167,16 +194,15 @@ Check that:
 - `supabase_schema.sql` has been executed.
 - Realtime is enabled for `participants` and `event_state` tables.
 
+### Admin Remove / Change Year fails
+
+Run the updated `supabase_schema.sql` in Supabase SQL Editor again. Vercel deploys frontend code only; it does not update Supabase functions automatically.
+
 ### Voice announcement does not play automatically
 
 Some browsers block auto voice until the user has interacted with the page. The result screen includes an `Announce Teams Again` button.
 
-### Someone selected the wrong year
-
-Use Admin Mode → Reset Event, then let everyone join again.
-
-
-## v5 Install Fix Notes
+## Install Fix Notes
 
 This version does not include `node_modules` or `package-lock.json` to avoid registry-lock issues from another environment. It includes `.npmrc` pointing npm to the official public npm registry.
 

@@ -821,3 +821,88 @@ select:focus, input:focus {
   .dashboard-header { grid-template-columns: 1fr; }
   .dashboard-count { min-width: 130px; min-height: 130px; width: fit-content; }
 }
+
+.no-top-margin {
+  margin-top: 0;
+}
+
+.admin-management-panel {
+  padding: clamp(20px, 4vw, 34px);
+  min-height: 570px;
+}
+
+.admin-participant-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-participant-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: center;
+  padding: 15px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: linear-gradient(135deg, rgba(255,255,255,0.13), rgba(255,255,255,0.06));
+  animation: chipIn 440ms ease both;
+}
+
+.admin-participant-main {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+}
+
+.admin-participant-main strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.admin-participant-main small {
+  display: block;
+  margin-top: 3px;
+  color: rgba(247,251,255,0.66);
+}
+
+.admin-participant-controls {
+  display: grid;
+  grid-template-columns: minmax(132px, 160px) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.admin-participant-controls select {
+  padding: 11px 12px;
+  border-radius: 14px;
+}
+
+.mini-danger-action {
+  border: 0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  color: #06101b;
+  font-weight: 950;
+  background: linear-gradient(135deg, #ff9aa6, #ffd0d6);
+  box-shadow: 0 12px 26px rgba(255,154,166,0.16);
+  transition: transform 180ms ease, filter 180ms ease, opacity 180ms ease;
+}
+
+.mini-danger-action:hover:not(:disabled) {
+  transform: translateY(-2px);
+  filter: brightness(1.06);
+}
+
+.mini-danger-action:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+@media (max-width: 860px) {
+  .admin-participant-card,
+  .admin-participant-controls {
+    grid-template-columns: 1fr;
+  }
+}

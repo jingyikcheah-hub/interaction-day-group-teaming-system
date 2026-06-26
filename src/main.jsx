@@ -22,8 +22,9 @@ function getInitialMode() {
 
 function App() {
   const [mode, setModeState] = useState(getInitialMode);
-  const { participants, eventState, loading, error, joinParticipant, adminStart, adminReset } = useRealtimeEvent();
+  const { participants, eventState, loading, error, joinParticipant, adminStart, adminReset, adminRemoveParticipant, adminUpdateParticipantYear } = useRealtimeEvent();
   const autoStartLock = useRef(false);
+  const previousParticipantCount = useRef(0);
 
   const setMode = (nextMode) => {
     setModeState(nextMode);
@@ -46,9 +47,12 @@ function App() {
   }, [eventState.status, eventState.version, participants.length]);
 
   useEffect(() => {
+    const justReachedFull = previousParticipantCount.current < 11 && participants.length === 11;
+    previousParticipantCount.current = participants.length;
+
     if (!isSupabaseConfigured) return;
     if (eventState.status !== "waiting") return;
-    if (participants.length !== 11) return;
+    if (!justReachedFull) return;
     if (autoStartLock.current) return;
 
     autoStartLock.current = true;
@@ -81,6 +85,8 @@ function App() {
             error={error}
             adminStart={adminStart}
             adminReset={adminReset}
+            adminRemoveParticipant={adminRemoveParticipant}
+            adminUpdateParticipantYear={adminUpdateParticipantYear}
             setMode={setMode}
           />
         )}
@@ -109,7 +115,7 @@ function useRealtimeEvent() {
       setParticipants(localParticipants);
       return;
     }
-    const { data, error } = await supabase.from("participants").select("name, year, joined_at").order("joined_at", { ascending: true });
+    const { data, error } = await supabase.from("participants").select("id, name, year, joined_at").order("joined_at", { ascending: true });
     if (error) setError(error.message);
     else setParticipants(data || []);
   };
@@ -159,7 +165,7 @@ function useRealtimeEvent() {
     if (!supabase) {
       const current = JSON.parse(localStorage.getItem("interaction_local_participants") || "[]");
       if (current.some((p) => p.name === name)) throw new Error("This name has already joined the wait list.");
-      const next = [...current, { name, year, joined_at: new Date().toISOString() }];
+      const next = [...current, { id: `local-${Date.now()}`, name, year, joined_at: new Date().toISOString() }];
       localStorage.setItem("interaction_local_participants", JSON.stringify(next));
       setParticipants(next);
       return;
@@ -217,7 +223,54 @@ function useRealtimeEvent() {
     if (error) throw new Error(error.message);
   };
 
-  return { participants, eventState, loading, error, joinParticipant, adminStart, adminReset };
+  const adminRemoveParticipant = async ({ username, password, participantId }) => {
+    setError("");
+    if (!participantId) throw new Error("Missing participant id.");
+
+    if (!supabase) {
+      const current = JSON.parse(localStorage.getItem("interaction_local_participants") || "[]");
+      const next = current.filter((p) => p.id !== participantId);
+      localStorage.setItem("interaction_local_participants", JSON.stringify(next));
+      setParticipants(next);
+      const nextEvent = { ...EMPTY_EVENT, version: Date.now(), updated_at: new Date().toISOString() };
+      localStorage.setItem("interaction_local_event", JSON.stringify(nextEvent));
+      setEventState(nextEvent);
+      return;
+    }
+
+    const { error } = await supabase.rpc("admin_remove_participant", {
+      admin_username: username,
+      admin_password: password,
+      p_participant_id: participantId
+    });
+    if (error) throw new Error(error.message);
+  };
+
+  const adminUpdateParticipantYear = async ({ username, password, participantId, year }) => {
+    setError("");
+    if (!participantId || !year) throw new Error("Missing participant or year.");
+
+    if (!supabase) {
+      const current = JSON.parse(localStorage.getItem("interaction_local_participants") || "[]");
+      const next = current.map((p) => (p.id === participantId ? { ...p, year } : p));
+      localStorage.setItem("interaction_local_participants", JSON.stringify(next));
+      setParticipants(next);
+      const nextEvent = { ...EMPTY_EVENT, version: Date.now(), updated_at: new Date().toISOString() };
+      localStorage.setItem("interaction_local_event", JSON.stringify(nextEvent));
+      setEventState(nextEvent);
+      return;
+    }
+
+    const { error } = await supabase.rpc("admin_update_participant_year", {
+      admin_username: username,
+      admin_password: password,
+      p_participant_id: participantId,
+      p_participant_year: year
+    });
+    if (error) throw new Error(error.message);
+  };
+
+  return { participants, eventState, loading, error, joinParticipant, adminStart, adminReset, adminRemoveParticipant, adminUpdateParticipantYear };
 }
 
 function HomeScreen({ setMode }) {
@@ -346,11 +399,36 @@ function ParticipantMode({ participants, eventState, loading, error, joinPartici
   );
 }
 
-function AdminMode({ participants, eventState, loading, error, adminStart, adminReset, setMode }) {
+function AdminMode({
+  participants,
+  eventState,
+  loading,
+  error,
+  adminStart,
+  adminReset,
+  adminRemoveParticipant,
+  adminUpdateParticipantYear,
+  setMode
+}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loggedIn, setLoggedIn] = useState(false);
   const [message, setMessage] = useState("");
+  const [busyAction, setBusyAction] = useState("");
+
+  const credentials = useMemo(() => ({ username, password }), [username, password]);
+
+  const runAdminAction = async (actionName, task) => {
+    setMessage("");
+    setBusyAction(actionName);
+    try {
+      await task();
+    } catch (err) {
+      setMessage(err.message || "Action failed.");
+    } finally {
+      setBusyAction("");
+    }
+  };
 
   const localLogin = (event) => {
     event.preventDefault();
@@ -367,24 +445,50 @@ function AdminMode({ participants, eventState, loading, error, adminStart, admin
       const confirmed = window.confirm(`Only ${participants.length}/11 participants have joined. Start anyway?`);
       if (!confirmed) return;
     }
-    try {
-      await adminStart({ username, password });
+    await runAdminAction("start", async () => {
+      await adminStart(credentials);
       setMessage("Formation started successfully.");
-    } catch (err) {
-      setMessage(err.message);
+    });
+  };
+
+  const recalculate = async () => {
+    if (participants.length !== 11) {
+      setMessage("Need exactly 11 participants to form teams.");
+      return;
     }
+    await runAdminAction("recalculate", async () => {
+      await adminStart(credentials);
+      setMessage("Teams recalculated successfully.");
+    });
   };
 
   const reset = async () => {
     const confirmed = window.confirm("Reset the entire wait list and team result?");
     if (!confirmed) return;
-    try {
-      await adminReset({ username, password });
+    await runAdminAction("reset", async () => {
+      await adminReset(credentials);
       setMessage("System reset completed.");
-    } catch (err) {
-      setMessage(err.message);
-    }
+    });
   };
+
+  const removeParticipant = async (person) => {
+    const confirmed = window.confirm(`Remove ${person.name} from the wait list?`);
+    if (!confirmed) return;
+    await runAdminAction(`remove-${person.id}`, async () => {
+      await adminRemoveParticipant({ ...credentials, participantId: person.id });
+      setMessage(`${person.name} removed from the wait list.`);
+    });
+  };
+
+  const updateYear = async (person, year) => {
+    if (person.year === year) return;
+    await runAdminAction(`year-${person.id}`, async () => {
+      await adminUpdateParticipantYear({ ...credentials, participantId: person.id, year });
+      setMessage(`${person.name}'s year updated to ${year}.`);
+    });
+  };
+
+  const isBusy = Boolean(busyAction);
 
   if (!loggedIn) {
     return (
@@ -413,7 +517,7 @@ function AdminMode({ participants, eventState, loading, error, adminStart, admin
       <div className="panel admin-panel">
         <BackButton setMode={setMode} />
         <div className="badge">Live Control Room</div>
-        <h1>Admin Dashboard</h1>
+        <h1>Admin Control Panel</h1>
         <div className="admin-stats">
           <div>
             <strong>{participants.length}</strong>
@@ -426,19 +530,67 @@ function AdminMode({ participants, eventState, loading, error, adminStart, admin
         </div>
 
         <div className="admin-actions">
-          <button className="big-action" onClick={start} disabled={loading || participants.length === 0 || eventState.status !== "waiting"}>
-            Start Formation
+          <button className="big-action" onClick={start} disabled={loading || isBusy || participants.length === 0 || eventState.status !== "waiting"}>
+            {busyAction === "start" ? "Starting..." : "Start Formation"}
           </button>
-          <button className="danger-action" onClick={reset}>Reset Event</button>
+          <button className="secondary-action no-top-margin" onClick={recalculate} disabled={loading || isBusy}>
+            {busyAction === "recalculate" ? "Recalculating..." : "Recalculate Teams"}
+          </button>
+          <button className="danger-action" onClick={reset} disabled={isBusy}>
+            {busyAction === "reset" ? "Resetting..." : "Reset Event"}
+          </button>
         </div>
 
         <p className="muted tiny-note">
-          Auto-start also triggers when the wait list reaches exactly 11 participants. Manual Start is available for admin control.
+          Manage mistaken joins here. Remove and Change Year are handled through admin RPC functions, so you do not need to open Supabase Table Editor during the event.
         </p>
         {(message || error) && <div className="status-line">{message || error}</div>}
       </div>
 
-      <WaitList participants={participants} />
+      <div className="panel admin-management-panel">
+        <div className="wait-title-row">
+          <div>
+            <div className="badge">Wait List Management</div>
+            <h2>Current Participants: {participants.length} / 11</h2>
+          </div>
+          <div className="live-dot"><span /> LIVE</div>
+        </div>
+
+        <div className="admin-participant-list">
+          {participants.length === 0 && <div className="empty-slot">No participants have joined yet.</div>}
+          {participants.map((person, index) => (
+            <div className="admin-participant-card" key={person.id || `${person.name}-${person.joined_at || index}`}>
+              <div className="admin-participant-main">
+                <span className="chip-index">{index + 1}</span>
+                <div>
+                  <strong>{person.name}</strong>
+                  <small>{person.year} • Joined {formatJoinedAt(person.joined_at)}</small>
+                </div>
+              </div>
+
+              <div className="admin-participant-controls">
+                <select
+                  aria-label={`Change year for ${person.name}`}
+                  value={person.year}
+                  onChange={(e) => updateYear(person, e.target.value)}
+                  disabled={isBusy}
+                >
+                  {YEAR_OPTIONS.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+                <button
+                  className="mini-danger-action"
+                  onClick={() => removeParticipant(person)}
+                  disabled={isBusy || !person.id}
+                >
+                  {busyAction === `remove-${person.id}` ? "Removing..." : "Remove"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
       {eventState.status === "completed" && (
         <div className="admin-results panel">
@@ -632,6 +784,19 @@ function ResultsBoard({ groups }) {
 
 function BackButton({ setMode }) {
   return <button className="card-nav-button back-button" onClick={() => setMode("home")}>← Home</button>;
+}
+
+function formatJoinedAt(value) {
+  if (!value) return "just now";
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }).format(new Date(value));
+  } catch {
+    return "just now";
+  }
 }
 
 function AnimatedBackground() {
