@@ -15,6 +15,14 @@ const EMPTY_EVENT = {
   version: 0
 };
 
+const FORMATION_COUNTDOWN_MS = 3000;
+const FORMATION_PROGRESS_MS = 3100;
+const FORMATION_TOTAL_MS = FORMATION_COUNTDOWN_MS + FORMATION_PROGRESS_MS;
+
+function isFormationVisible(status) {
+  return status === "forming" || status === "completed";
+}
+
 function getInitialMode() {
   const hashMode = window.location.hash.replace("#", "");
   return ["home", "user", "admin", "demo", "dashboard"].includes(hashMode) ? hashMode : "home";
@@ -301,7 +309,7 @@ function HomeScreen({ setMode }) {
 }
 
 function DashboardMode({ participants, eventState, setMode }) {
-  if (eventState.status === "completed") {
+  if (isFormationVisible(eventState.status)) {
     return <RevealExperience eventState={eventState} setMode={setMode} participants={participants} />;
   }
 
@@ -344,7 +352,7 @@ function ParticipantMode({ participants, eventState, loading, error, joinPartici
     }
   };
 
-  if (eventState.status === "completed") {
+  if (isFormationVisible(eventState.status)) {
     return <RevealExperience eventState={eventState} setMode={setMode} participants={participants} />;
   }
 
@@ -620,14 +628,14 @@ function DemoMode({ setMode }) {
     const groups = createBalancedGroups(DEMO_PARTICIPANTS);
     setDemoEvent({
       ...EMPTY_EVENT,
-      status: "completed",
+      status: "forming",
       groups,
       started_at: new Date().toISOString(),
       version: Date.now()
     });
   };
 
-  if (demoEvent.status === "completed") {
+  if (isFormationVisible(demoEvent.status)) {
     return <RevealExperience eventState={demoEvent} setMode={setMode} participants={demoParticipants} demoMode />;
   }
 
@@ -651,29 +659,49 @@ function RevealExperience({ eventState, setMode, participants, demoMode = false 
   const [phase, setPhase] = useState("countdown");
   const [count, setCount] = useState(3);
   const [spoken, setSpoken] = useState(false);
+  const finalizedRef = useRef(false);
   const groups = eventState.groups || {};
   const announcement = useMemo(() => createAnnouncementText(groups), [groups]);
 
   useEffect(() => {
-    const started = eventState.started_at ? new Date(eventState.started_at).getTime() : Date.now();
-    const elapsed = Date.now() - started;
+    setSpoken(false);
+    finalizedRef.current = false;
+  }, [eventState.version, eventState.started_at]);
 
-    if (!demoMode && elapsed > 9000) {
-      setPhase("results");
-      return;
-    }
+  useEffect(() => {
+    const startedAtMs = eventState.started_at ? new Date(eventState.started_at).getTime() : Date.now();
 
-    setPhase("countdown");
-    setCount(3);
-    const timers = [
-      setTimeout(() => setCount(2), 1000),
-      setTimeout(() => setCount(1), 2000),
-      setTimeout(() => setPhase("progress"), 3000),
-      setTimeout(() => setPhase("results"), 6100)
-    ];
+    const updateAnimationPhase = () => {
+      const elapsed = Math.max(0, Date.now() - startedAtMs);
 
-    return () => timers.forEach(clearTimeout);
+      if (elapsed < 1000) {
+        setPhase("countdown");
+        setCount(3);
+      } else if (elapsed < 2000) {
+        setPhase("countdown");
+        setCount(2);
+      } else if (elapsed < FORMATION_COUNTDOWN_MS) {
+        setPhase("countdown");
+        setCount(1);
+      } else if (elapsed < FORMATION_TOTAL_MS) {
+        setPhase("progress");
+      } else {
+        setPhase("results");
+      }
+    };
+
+    updateAnimationPhase();
+    const interval = window.setInterval(updateAnimationPhase, 120);
+    return () => window.clearInterval(interval);
   }, [eventState.version, eventState.started_at, demoMode]);
+
+  useEffect(() => {
+    if (phase !== "results" || demoMode || eventState.status !== "forming" || finalizedRef.current || !supabase) return;
+    finalizedRef.current = true;
+    supabase.rpc("finish_forming_event").then(({ error }) => {
+      if (error) console.warn("Finish formation skipped:", error.message);
+    });
+  }, [phase, demoMode, eventState.status]);
 
   useEffect(() => {
     if (phase !== "results" || spoken) return;

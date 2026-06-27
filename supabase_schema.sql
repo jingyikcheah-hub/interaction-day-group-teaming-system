@@ -37,8 +37,12 @@ create table if not exists public.event_state (
   version integer not null default 0,
   updated_at timestamptz not null default now(),
   constraint only_one_event_row check (id = 1),
-  constraint valid_event_status check (status in ('waiting', 'completed'))
+  constraint valid_event_status check (status in ('waiting', 'forming', 'completed'))
 );
+
+alter table public.event_state drop constraint if exists valid_event_status;
+alter table public.event_state
+  add constraint valid_event_status check (status in ('waiting', 'forming', 'completed'));
 
 insert into public.event_state (id, status, groups, version)
 values (1, 'waiting', '{}'::jsonb, 0)
@@ -118,7 +122,7 @@ begin
 
   update public.event_state
   set
-    status = 'completed',
+    status = 'forming',
     started_at = now(),
     groups = coalesce(group_payload, '{}'::jsonb),
     version = version + 1,
@@ -142,7 +146,7 @@ begin
 
   update public.event_state
   set
-    status = 'completed',
+    status = 'forming',
     started_at = now(),
     groups = coalesce(group_payload, '{}'::jsonb),
     version = version + 1,
@@ -169,7 +173,7 @@ begin
 
   update public.event_state
   set
-    status = 'completed',
+    status = 'forming',
     started_at = now(),
     groups = coalesce(group_payload, '{}'::jsonb),
     version = version + 1,
@@ -178,6 +182,23 @@ begin
 
   get diagnostics changed_count = row_count;
   return changed_count = 1;
+end;
+$$;
+
+create or replace function public.finish_forming_event()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.event_state
+  set
+    status = 'completed',
+    updated_at = now()
+  where id = 1
+    and status = 'forming'
+    and started_at <= now() - interval '6 seconds';
 end;
 $$;
 
@@ -284,6 +305,7 @@ grant execute on function public.verify_interaction_admin(text, text) to anon;
 grant execute on function public.admin_start_event(text, text, jsonb) to anon;
 grant execute on function public.admin_save_groups(text, text, jsonb) to anon;
 grant execute on function public.auto_start_when_full(jsonb) to anon;
+grant execute on function public.finish_forming_event() to anon;
 grant execute on function public.admin_reset_event(text, text) to anon;
 grant execute on function public.admin_remove_participant(text, text, uuid) to anon;
 grant execute on function public.admin_update_participant_year(text, text, uuid, text) to anon;

@@ -213,3 +213,29 @@ npm.cmd config set registry https://registry.npmjs.org/
 npm.cmd install --registry=https://registry.npmjs.org/
 npm.cmd run dev
 ```
+
+
+## v8 Real Workflow Animation Fix
+
+This version fixes the difference between Demo Workflow and the real Supabase workflow.
+
+Important SQL change:
+- `event_state.status` now supports `waiting`, `forming`, and `completed`.
+- `admin_start_event` and `auto_start_when_full` now set status to `forming` first instead of jumping directly to `completed`.
+- The Dashboard/User screens show the synchronized 3-2-1 countdown and progress bar based on `started_at`.
+- After the animation duration, the frontend calls `finish_forming_event()` to mark the event as completed.
+
+After deploying this version, run the updated `supabase_schema.sql` once in Supabase SQL Editor.
+
+
+## v9 Algorithm Fix Notes
+
+This version makes the real workflow and demo workflow use the same deterministic team formation behaviour.
+
+Key fixes:
+- Removed random shuffle / random tie-picking from the grouping algorithm.
+- Group 4 is now explicitly compensated first because it has only 2 members.
+- When possible, Group 4 is strongly forced to be Senior + Year 2, e.g. Year 3 + Year 2.
+- Group 1, Group 2, and Group 3 are then balanced against each other by total year strength, average year strength, and year distribution.
+- Every group still displays members from higher year to lower year.
+- Demo workflow now also enters the same `forming` reveal path instead of directly using a completed state.
